@@ -1,15 +1,19 @@
 //create a pool instance
 const { ethers } = require("ethers");
 const provider = new ethers.providers.JsonRpcProvider('https://mainnet.infura.io/v3/dd952cde35f0408a90bfe7ac700d125b');
-const { Pool, TickListDataProvider, Tick, Trade, Route } = require("@uniswap/v3-sdk");
-const { Token, CurrencyAmount, Percent } = require("@uniswap/sdk-core");
-const UniswapV3Router = require ("@uniswap/v3-periphery/artifacts/contracts/interfaces/ISwapRouter.sol/ISwapRouter.json")
+
+const { Pool, TickListDataProvider, Tick, Trade, Route, priceToClosestTick, Position } = require("@uniswap/v3-sdk");
+const { Token, CurrencyAmount, Percent, Price } = require("@uniswap/sdk-core");
+const UniswapV3Router = require ("@uniswap/v3-periphery/artifacts/contracts/interfaces/ISwapRouter.sol/ISwapRouter.json");
+const UniswapPositionManager = require("@uniswap/v3-periphery/artifacts/contracts/interfaces/INonfungiblePositionManager.sol/INonfungiblePositionManager.json");
+const positionManagerAddress = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
+const positionManagerContract = new ethers.Contract(positionManagerAddress, UniswapPositionManager.abi, provider);
 
 //need to sign transactions replace for env variable
 const signer = new ethers.Wallet.createRandom();
 const account = signer.connect(provider);
 
-
+const uniswapPositionManager = positionManagerContract.connect(account);
 const poolAddress = "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8";
 const UniswapV3Pool = require("@uniswap/v3-core/artifacts/contracts/interfaces/IUniswapV3Pool.sol/IUniswapV3Pool.json");
 poolContract = new ethers.Contract(poolAddress, UniswapV3Pool.abi, provider);
@@ -110,23 +114,70 @@ async function  swapforWeth(_amount) {
         amountOutMinimum: ethers.utils.parseUnits(amountOutMinimum.toExact(), 18)
     }
 
-    //use chainlink to query gasPrice
-    const swapTx = uniswapRouter.exactInput(
-        swapParams,
-        {value: _amount, gasPrice: 20e9 }
-    )
+    // use chainlink to query gasPrice
+    // const swapTx = uniswapRouter.exactInput(
+    //     swapParams,
+    //     {value: _amount, gasPrice: 20e9 }
+    // )
 
-    console.log(`transaction: ${swapTx.hash}`);
-    const swapReceipt = await swapTx.wait();
-    console.log(`Swap Transaction Receipt: ${swapReceipt}`);
+    // console.log(`transaction: ${swapTx.hash}`);
+    // const swapReceipt = await swapTx.wait();
+    // console.log(`Swap Transaction Receipt: ${swapReceipt}`);
 
 }
 
 //provide liquidty and get an nft
 async function addLiquidity() {
+    //add liquidtity within the 1500 -3000 weth range
+    const deadline = Math.floor(Date.now() / 1000) + 60 * 5; // 5 minute deadline
+    const _pool = await createPool();
+    const lowerPrice = CurrencyAmount.fromRawAmount(token0, "1500000000");
+    const upperPrice = CurrencyAmount.fromRawAmount(token0, "3000000000");
+
+    const lowerPriceTick = priceToClosestTick(new Price(token1, token0, lowerPrice.numerator, lowerPrice.denominator));
+    const upperPriceTick = priceToClosestTick(new Price(token1, token0, upperPrice.numerator, upperPrice.denominator));
+
+    const spacing = await poolContract.tickSpacing();
+    const lowerTickSpacing = Math.floor(lowerPriceTick / spacing) * spacing;
+    const upperTickSpacing = Math.floor(upperPriceTick / spacing) * spacing;
+    console.log(`lower tick spacing ${lowerTickSpacing}`);
+    console.log(`upper tick spacing ${upperTickSpacing}`);
+
+    const position = new Position({
+        pool: _pool,
+        liquidity: ethers.utils.parseEther("5.0"),
+        tickLower: lowerTickSpacing,
+        tickUpper: upperTickSpacing
+    });
+
+    const mintAmounts = position.mintAmounts;
+
+    const mintParams = {
+        token0: usdcAddress,
+        token1: wethAddress,
+        fee: _pool.fee,
+        tickLower: lowerTickSpacing,
+        tickUpper: upperTickSpacing,
+        amount0Desired: mintAmounts.amount0.toString(),
+        amount1Desired:position.amount1.toString(),
+        amount0Min: mintAmounts.amount0.toString(),
+        amount1Min:mintAmounts.amount1.toString(),
+        recipient: signer.address,
+        deadline: deadline
+    }
+
+    // const mintTx = await uniswapPositionManager.mint(
+    //     mintParams,
+    //     {
+    //         value: value, 
+    //         gasPrice: 20e9
+    //     }
+    // )
+    console.log("Success, you have a position in a pool")
 
 }
 
 
 
 swapforWeth("1000000000");
+addLiquidity();
